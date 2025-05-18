@@ -38,8 +38,9 @@ class MandalaGenerator:
         self.mini_map = pygame.Surface((self.mini_map_size, self.mini_map_size))
         
         # Initialize noise generators for terrain
-        self.noise_gen = OpenSimplex(seed=random.randint(1, 10000))
-        self.feature_noise = OpenSimplex(seed=random.randint(1, 10000))
+        seed = random.randint(1, 10000)
+        self.noise_gen = OpenSimplex(seed=seed)
+        self.feature_noise = OpenSimplex(seed=seed+1)
         
         # Current view parameters
         self.current_region = 0  # 0, 1, 2, 3 for the four cardinal regions
@@ -50,6 +51,9 @@ class MandalaGenerator:
         # Cache for character surfaces (for better performance)
         self.char_cache = {}
         
+        # ASCII representation of the terrain (for path transformations)
+        self.terrain_chars = [[' ' for _ in range(size)] for _ in range(size)]
+        
         # Regions for the four cardinal areas
         self.regions = [
             {"name": "North", "center_x": 0.25, "center_y": 0.25, "color_bias": LIGHT_GREEN},
@@ -57,46 +61,6 @@ class MandalaGenerator:
             {"name": "South", "center_x": 0.75, "center_y": 0.75, "color_bias": CYAN},
             {"name": "West", "center_x": 0.25, "center_y": 0.75, "color_bias": PURPLE}
         ]
-        
-        # Location of the three challenge points for each region
-        self.challenge_points = []
-        for region_idx in range(4):
-            points = []
-            region = self.regions[region_idx]
-            center_x, center_y = region["center_x"], region["center_y"]
-            
-            # Create path from outside toward center
-            path_length = 0.15  # Shorter path length to keep points more visible
-            angle_offset = region_idx * math.pi / 2
-            
-            for i in range(3):
-                # Calculate position along path toward center
-                distance = 0.25 - (i * path_length)  # Start closer to center
-                angle = angle_offset + (i * 0.2)
-                
-                x = center_x + math.cos(angle) * distance
-                y = center_y + math.sin(angle) * distance
-                
-                # Add some separation between scroll, cipher, and challenge
-                scroll_x = x - 0.02
-                scroll_y = y - 0.02
-                
-                cipher_x = x
-                cipher_y = y
-                
-                challenge_x = x + 0.02
-                challenge_y = y + 0.02
-                
-                # Add to challenge points with all three elements
-                challenge_type = ["fire", "wave", "lightning"][i]
-                points.append({
-                    "level": i,
-                    "scroll": {"x": scroll_x, "y": scroll_y},
-                    "cipher": {"x": cipher_x, "y": cipher_y},
-                    "challenge": {"x": challenge_x, "y": challenge_y, "type": challenge_type}
-                })
-            
-            self.challenge_points.append(points)
         
         # Generate the terrain and mini-map
         self.generate_terrain()
@@ -233,6 +197,12 @@ class MandalaGenerator:
                 # Get character and color for this position
                 char, color = self.get_terrain_char_and_color(norm_x, norm_y)
                 
+                # Store character for path transformations
+                row_idx = int(y * self.size / rows)
+                col_idx = int(x * self.size / cols)
+                if 0 <= row_idx < self.size and 0 <= col_idx < self.size:
+                    self.terrain_chars[row_idx][col_idx] = char
+                
                 # Render the character efficiently (using cache for better performance)
                 cache_key = f"{char}_{color}"
                 if cache_key not in self.char_cache:
@@ -240,6 +210,51 @@ class MandalaGenerator:
                     
                 char_surface = self.char_cache[cache_key]
                 self.surface.blit(char_surface, (x * char_width, y * char_height))
+    
+    def transform_path(self, transform_info):
+        """Transform characters along a path"""
+        # Get transformation area and map
+        area = transform_info["area"]
+        transform_map = transform_info["map"]
+        
+        min_x, min_y, max_x, max_y = area
+        
+        # ASCII character size
+        char_width, char_height = self.font.size("X")
+        
+        # Apply transformations
+        for y in range(min_y, max_y):
+            for x in range(min_x, max_x):
+                # Check if position is within bounds
+                if (0 <= y < self.size and 0 <= x < self.size and
+                    y < len(self.terrain_chars) and x < len(self.terrain_chars[0])):
+                    
+                    # Get current character
+                    curr_char = self.terrain_chars[y][x]
+                    
+                    # Check if character should be transformed
+                    if curr_char in transform_map:
+                        # Get new character
+                        new_char = transform_map[curr_char]
+                        
+                        # Update terrain character
+                        self.terrain_chars[y][x] = new_char
+                        
+                        # Calculate screen position
+                        screen_x = int(x / self.size * (self.size // char_width)) * char_width
+                        screen_y = int(y / self.size * (self.size // char_height)) * char_height
+                        
+                        # Get appropriate color (path color - slightly glowing)
+                        region = self.regions[self.current_region]
+                        color = tuple(min(255, c + 50) for c in region["color_bias"])
+                        
+                        # Render the new character
+                        cache_key = f"{new_char}_{color}"
+                        if cache_key not in self.char_cache:
+                            self.char_cache[cache_key] = self.font.render(new_char, True, color)
+                            
+                        char_surface = self.char_cache[cache_key]
+                        self.surface.blit(char_surface, (screen_x, screen_y))
     
     def generate_mini_map(self):
         """Generate the mini-map in the top right corner"""
@@ -332,65 +347,32 @@ class MandalaGenerator:
             return True
             
         return False
-
-    def get_clickable_points(self):
-        """Get all clickable points in the current view"""
-        clickable = []
+    
+    def zoom(self, factor):
+        """Zoom in or out"""
+        new_zoom = self.zoom_level * factor
+        # Limit zoom range
+        if 0.5 <= new_zoom <= 5.0:
+            self.zoom_level = new_zoom
+            self.generate_terrain()
+            self.generate_mini_map()
+    
+    def pan(self, dx, dy):
+        """Pan the view"""
+        # Adjust by zoom level to make panning consistent at different zooms
+        self.view_offset_x += dx / self.zoom_level
+        self.view_offset_y += dy / self.zoom_level
         
-        # Only include points from the current region
-        region_points = self.challenge_points[self.current_region]
+        # Limit panning to prevent getting too far from the region
+        region = self.regions[self.current_region]
+        max_offset = 0.3 / self.zoom_level
         
-        for point_set in region_points:
-            level = point_set["level"]
-            
-            # Add scroll point
-            norm_x = point_set["scroll"]["x"]
-            norm_y = point_set["scroll"]["y"]
-            screen_x, screen_y = self.get_screen_pos(norm_x, norm_y)
-            
-            if screen_x is not None:
-                clickable.append({
-                    "type": "scroll",
-                    "team": self.current_region,
-                    "level": level,
-                    "x": screen_x,
-                    "y": screen_y,
-                    "radius": 15
-                })
-            
-            # Add cipher point
-            norm_x = point_set["cipher"]["x"]
-            norm_y = point_set["cipher"]["y"]
-            screen_x, screen_y = self.get_screen_pos(norm_x, norm_y)
-            
-            if screen_x is not None:
-                clickable.append({
-                    "type": "cipher",
-                    "team": self.current_region,
-                    "level": level,
-                    "x": screen_x,
-                    "y": screen_y,
-                    "radius": 15
-                })
-            
-            # Add challenge point
-            norm_x = point_set["challenge"]["x"]
-            norm_y = point_set["challenge"]["y"]
-            screen_x, screen_y = self.get_screen_pos(norm_x, norm_y)
-            
-            if screen_x is not None:
-                clickable.append({
-                    "type": "challenge",
-                    "challenge_type": point_set["challenge"]["type"],
-                    "team": self.current_region,
-                    "level": level,
-                    "x": screen_x,
-                    "y": screen_y,
-                    "radius": 15
-                })
+        self.view_offset_x = max(-max_offset, min(max_offset, self.view_offset_x))
+        self.view_offset_y = max(-max_offset, min(max_offset, self.view_offset_y))
         
-        return clickable
-
+        self.generate_terrain()
+        self.generate_mini_map()
+    
     def get_screen_pos(self, norm_x, norm_y):
         """Convert normalized world position to screen position"""
         # Calculate the visible region boundaries based on current view
@@ -423,27 +405,7 @@ class MandalaGenerator:
         
         return screen_x, screen_y
     
-    def zoom(self, factor):
-        """Zoom in or out"""
-        new_zoom = self.zoom_level * factor
-        # Limit zoom range
-        if 0.5 <= new_zoom <= 5.0:
-            self.zoom_level = new_zoom
-            self.generate_terrain()
-            self.generate_mini_map()
-    
-    def pan(self, dx, dy):
-        """Pan the view"""
-        # Adjust by zoom level to make panning consistent at different zooms
-        self.view_offset_x += dx / self.zoom_level
-        self.view_offset_y += dy / self.zoom_level
-        
-        # Limit panning to prevent getting too far from the region
-        region = self.regions[self.current_region]
-        max_offset = 0.3 / self.zoom_level
-        
-        self.view_offset_x = max(-max_offset, min(max_offset, self.view_offset_x))
-        self.view_offset_y = max(-max_offset, min(max_offset, self.view_offset_y))
-        
-        self.generate_terrain()
-        self.generate_mini_map()
+    def apply_path_transformations(self, transformations):
+        """Apply multiple path transformations"""
+        for transform_info in transformations:
+            self.transform_path(transform_info)
