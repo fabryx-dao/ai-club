@@ -32,11 +32,15 @@ def main():
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_p:  # P key for Print
                     game.print_screen()
+                elif event.key == pygame.K_RETURN and game.input_active:
+                    game.process_input()
                 else:
                     game.handle_input(event)
-            elif event.type == pygame.MOUSEBUTTONDOWN:
-                if event.button == 1:  # Left mouse button
+            elif event.type in [pygame.MOUSEWHEEL, pygame.MOUSEBUTTONDOWN]:
+                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:  # Left mouse button
                     game.handle_click(event.pos)
+                else:
+                    game.handle_input(event)
         
         # Update game state
         game.update()

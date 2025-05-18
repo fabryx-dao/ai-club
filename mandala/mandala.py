@@ -66,26 +66,26 @@ class MandalaGenerator:
             center_x, center_y = region["center_x"], region["center_y"]
             
             # Create path from outside toward center
-            path_length = 0.3
+            path_length = 0.15  # Shorter path length to keep points more visible
             angle_offset = region_idx * math.pi / 2
             
             for i in range(3):
                 # Calculate position along path toward center
-                distance = 0.4 - (i * path_length / 3)
+                distance = 0.25 - (i * path_length)  # Start closer to center
                 angle = angle_offset + (i * 0.2)
                 
-                x = 0.5 + math.cos(angle) * distance
-                y = 0.5 + math.sin(angle) * distance
+                x = center_x + math.cos(angle) * distance
+                y = center_y + math.sin(angle) * distance
                 
-                # Store positions for scroll, cipher, and challenge
-                scroll_x = x - 0.03 + (i * 0.01)
-                scroll_y = y - 0.03 + (i * 0.01)
+                # Add some separation between scroll, cipher, and challenge
+                scroll_x = x - 0.02
+                scroll_y = y - 0.02
                 
                 cipher_x = x
                 cipher_y = y
                 
-                challenge_x = x + 0.03 - (i * 0.01)
-                challenge_y = y + 0.03 - (i * 0.01)
+                challenge_x = x + 0.02
+                challenge_y = y + 0.02
                 
                 # Add to challenge points with all three elements
                 challenge_type = ["fire", "wave", "lightning"][i]
@@ -332,7 +332,7 @@ class MandalaGenerator:
             return True
             
         return False
-    
+
     def get_clickable_points(self):
         """Get all clickable points in the current view"""
         clickable = []
@@ -390,39 +390,38 @@ class MandalaGenerator:
                 })
         
         return clickable
-    
+
     def get_screen_pos(self, norm_x, norm_y):
         """Convert normalized world position to screen position"""
-        # Calculate the visible region
+        # Calculate the visible region boundaries based on current view
         region = self.regions[self.current_region]
         view_center_x = region["center_x"] + self.view_offset_x
         view_center_y = region["center_y"] + self.view_offset_y
         view_width = 1.0 / self.zoom_level
         view_height = 1.0 / self.zoom_level
         
+        view_left = view_center_x - view_width / 2
+        view_right = view_center_x + view_width / 2
+        view_top = view_center_y - view_height / 2
+        view_bottom = view_center_y + view_height / 2
+        
         # Check if the point is in the visible region
-        if (abs(norm_x - view_center_x) > view_width / 2 or 
-            abs(norm_y - view_center_y) > view_height / 2):
+        if (norm_x < view_left or norm_x > view_right or 
+            norm_y < view_top or norm_y > view_bottom):
             return None, None
         
-        # Calculate screen position
-        char_width, char_height = self.font.size("X")
-        cols = self.size // char_width
-        rows = self.size // char_height
-        
-        # Adjust for mini-map region
-        mini_map_cols = self.mini_map_size // char_width
-        mini_map_rows = self.mini_map_size // char_height
-        
-        # Convert from normalized to screen coordinates
-        screen_x = int((norm_x - (view_center_x - view_width / 2)) / view_width * cols)
-        screen_y = int((norm_y - (view_center_y - view_height / 2)) / view_height * rows)
+        # Convert to screen coordinates
+        screen_x = int((norm_x - view_left) * self.size / view_width)
+        screen_y = int((norm_y - view_top) * self.size / view_height)
         
         # Check if the point is in the mini-map area
-        if screen_x >= cols - mini_map_cols and screen_y < mini_map_rows:
+        mini_map_right = self.size
+        mini_map_bottom = self.mini_map_size
+        
+        if screen_x >= mini_map_right - self.mini_map_size and screen_y < mini_map_bottom:
             return None, None
         
-        return screen_x * char_width, screen_y * char_height
+        return screen_x, screen_y
     
     def zoom(self, factor):
         """Zoom in or out"""
