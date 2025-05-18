@@ -1,0 +1,5 @@
+pyserial
+gpiozero
+
+[:platform_system == "Linux"]
+spidev
