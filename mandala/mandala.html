@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Breath Alchemy Interface</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: monospace;
+      background-color: #111;
+      color: #0f0;
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+    }
+    .column {
+      padding: 10px;
+      box-sizing: border-box;
+      overflow-y: auto;
+    }
+    #map {
+      flex: 2;
+      background-color: #000;
+      white-space: pre;
+      font-size: 12px;
+    }
+    #console {
+      flex: 1;
+      background-color: #111;
+      border-left: 1px solid #444;
+    }
+    #sensor {
+      flex: 1;
+      background-color: #111;
+      border-left: 1px solid #444;
+    }
+    input {
+      width: 100%;
+      padding: 5px;
+      background: #222;
+      color: #0f0;
+      border: 1px solid #0f0;
+      margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div id="map" class="column">
+    <!-- ASCII Mandala -->
+    <pre id="mandala"></pre>
+  </div>
+  <div id="console" class="column">
+    <h3>Input Console</h3>
+    <p>Enter your command:</p>
+    <input type="text" placeholder="breathe in..." />
+  </div>
+  <div id="sensor" class="column">
+    <h3>Sensor Feedback</h3>
+    <p>Heart Rate: 72 bpm</p>
+    <p>Breath Depth: Moderate</p>
+    <p>Hold Time: --</p>
+  </div>
+
+  <script>
+    const width = 60;
+    const height = 30;
+    const centerX = width / 2;
+    const centerY = height / 2;
+    const chars = " .:-=+*#%@";
+
+    function getChar(value) {
+      const index = Math.floor(value * (chars.length - 1));
+      return chars[index];
+    }
+
+    function generateMandala() {
+      let mandala = "";
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          let dx = x - centerX;
+          let dy = y - centerY;
+          let dist = Math.sqrt(dx * dx + dy * dy);
+          let angle = Math.atan2(dy, dx);
+          angle = (angle + Math.PI) / (2 * Math.PI);
+
+          let radial = 0.5 + 0.5 * Math.sin(10 * angle + dist / 2);
+          let circular = 0.5 + 0.5 * Math.sin(dist / 2);
+
+          let val = (radial + circular) / 2;
+          mandala += getChar(val);
+        }
+        mandala += "\n";
+      }
+      return mandala;
+    }
+
+    document.getElementById("mandala").textContent = generateMandala();
+  </script>
+</body>
+</html>
