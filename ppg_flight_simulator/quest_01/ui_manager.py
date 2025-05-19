@@ -232,30 +232,48 @@ class UIManager:
         self.quit_button = tk.Button(
             self.control_frame,
             text="Quit",
-            command=self.show_intro_screen,
+            command=self.handle_quit_button,
             **button_style
         )
         self.quit_button.pack(side=tk.RIGHT, padx=5)
     
     def show_intro_screen(self):
         """Show the intro/selection screen, hide the game screen"""
-        # Stop any ongoing game
-        if self.arduino_manager.running:
-            self.arduino_manager.stop_reading()
-        
-        # Reset game state
-        self.game_manager.reset_game()
-        
-        # Hide game frame, show intro frame
-        self.game_frame.pack_forget()
-        self.intro_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # Update current screen
-        self.current_screen = 'intro'
-        
-        # Cancel any scheduled updates
-        if hasattr(self, '_update_id'):
-            self.root.after_cancel(self._update_id)
+        try:
+            # First, ensure we stop data reading if it's running
+            if self.arduino_manager.running:
+                self.arduino_manager.stop_reading()
+            
+            # Force reset the game state
+            self.game_manager.reset_game()
+            
+            # Clear visualization completely
+            if hasattr(self, 'ax') and self.ax is not None:
+                self.clear_visualization()
+            
+            # Clear any data in the Arduino manager
+            self.arduino_manager.clear_data()
+            
+            # Reset the action button to Start
+            if hasattr(self, 'action_button'):
+                self.action_button.config(text="Start")
+            
+            # Hide game frame, show intro frame
+            self.game_frame.pack_forget()
+            self.intro_frame.pack(fill=tk.BOTH, expand=True)
+            
+            # Update current screen
+            self.current_screen = 'intro'
+            
+            # Cancel any scheduled updates
+            if hasattr(self, '_update_id'):
+                self.root.after_cancel(self._update_id)
+                
+            if self.debug:
+                print("Successfully switched to intro screen")
+        except Exception as e:
+            if self.debug:
+                print(f"Error returning to intro screen: {e}")
     
     def start_game_mode(self, mode):
         """Start a specific game mode (fire or wave)
@@ -274,8 +292,38 @@ class UIManager:
             print(f"Starting game mode: {mode}, duration: {self.game_manager.max_duration}s")
             
         try:
-            # Clear the plot completely
-            self.ax.clear()
+            # Make sure any ongoing updates are cancelled
+            if hasattr(self, '_update_id'):
+                try:
+                    self.root.after_cancel(self._update_id)
+                except:
+                    pass
+            
+            # Reset game state 
+            self.game_manager.reset_game()
+            
+            # Clear any data in Arduino manager
+            self.arduino_manager.clear_data()
+            
+            # Make sure Arduino is not reading
+            if self.arduino_manager.running:
+                self.arduino_manager.stop_reading()
+                
+            # Completely recreate the plot if needed
+            if self.fig is None or self.ax is None:
+                if self.debug:
+                    print("Creating new matplotlib figure")
+                self.fig = Figure(figsize=(16, 9), dpi=100, facecolor='black', edgecolor='black')
+                self.ax = self.fig.add_subplot(111, facecolor='black')
+                
+                if hasattr(self, 'canvas') and self.canvas is not None:
+                    self.canvas.get_tk_widget().destroy()
+                
+                self.canvas = FigureCanvasTkAgg(self.fig, master=self.plot_frame)
+                self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+            else:
+                # Clear the plot completely
+                self.ax.clear()
             
             # Reset the plot style
             self.ax.set_facecolor('black')
@@ -346,6 +394,11 @@ class UIManager:
         except Exception as e:
             # Print any errors that occur during setup
             print(f"Error setting up game mode: {e}")
+            # If there's an error, try to return to the intro screen
+            try:
+                self.handle_quit_button()
+            except:
+                pass
     
     def register_callbacks(self):
         """Register callbacks for Arduino and game events"""
@@ -679,6 +732,50 @@ class UIManager:
         # Schedule next update
         self.schedule_update()
     
+    def handle_quit_button(self):
+        """Handle quit button press, properly cleaning up based on current state"""
+        if self.debug:
+            print("Quit button pressed - returning to menu")
+            
+        # Stop reading data if it's running
+        if self.arduino_manager.running:
+            self.arduino_manager.stop_reading()
+            
+        # Reset game state
+        self.game_manager.reset_game()
+        
+        # Clear any data in Arduino manager
+        self.arduino_manager.clear_data()
+            
+        # Cancel any ongoing updates
+        if hasattr(self, '_update_id'):
+            try:
+                self.root.after_cancel(self._update_id)
+            except:
+                pass
+        
+        # Update UI state for next game
+        if hasattr(self, 'action_button'):
+            self.action_button.config(text="Start")
+            
+        # Reset visualization elements
+        self.baseline_line = None
+        self.ramp_line = None
+        self.ramp_fill = None
+        self.wave_fill = None
+                
+        # Clear out existing frames
+        self.game_frame.pack_forget()
+        
+        # Show intro frame
+        self.intro_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Update current screen
+        self.current_screen = 'intro'
+        
+        if self.debug:
+            print("Successfully returned to intro screen")
+    
     def schedule_update(self):
         """Schedule the next UI update"""
-        self.root.after(self.update_interval, self.update_plot)
+        self._update_id = self.root.after(self.update_interval, self.update_plot)
