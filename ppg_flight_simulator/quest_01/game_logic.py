@@ -12,8 +12,12 @@ class GameManager:
     # Game states
     STATE_IDLE = 'idle'                # Not started
     STATE_CALIBRATING = 'calibrating'  # First phase (0-10s)
-    STATE_CHALLENGE = 'challenge'      # Main phase (10-40s)
+    STATE_CHALLENGE = 'challenge'      # Main phase (fire: 10-40s, wave: 10-70s)
     STATE_COMPLETE = 'complete'        # Finished
+    
+    # Game modes
+    MODE_FIRE = 'fire'     # Original game (40s total, breathe up)
+    MODE_WAVE = 'wave'     # Extended game (70s total, breathe up then down)
     
     def __init__(self, debug=False):
         """Initialize the Game Manager
@@ -23,12 +27,24 @@ class GameManager:
         """
         self.debug = debug
         
-        # Game configuration
-        self.max_duration = 40.0             # Total game duration in seconds
+        # Default to fire game
+        self.game_mode = self.MODE_FIRE
+        
+        # Game configuration - common for both modes
         self.calibration_start_time = 3.0    # Start collecting baseline at 3s
         self.calibration_end_time = 10.0     # End baseline calculation at 10s
         self.challenge_start_time = 10.0     # Start the challenge phase
-        self.ramp_delta = 50.0               # Increase in target over challenge
+        self.ramp_delta = 50.0               # Increase/decrease in target over challenge
+        
+        # Fire (default) game configuration
+        self.fire_max_duration = 40.0        # Total fire game duration
+        
+        # Wave game configuration
+        self.wave_max_duration = 70.0        # Total wave game duration
+        self.wave_transition_time = 40.0     # When to switch from up to down
+        
+        # Current max duration depends on mode
+        self.max_duration = self.fire_max_duration
         
         # Game state
         self.state = self.STATE_IDLE
@@ -49,6 +65,22 @@ class GameManager:
         
         # Callback for state changes
         self.state_callback = None
+    
+    def set_game_mode(self, mode):
+        """Set the game mode (fire or wave)
+        
+        Args:
+            mode (str): Game mode (MODE_FIRE or MODE_WAVE)
+        """
+        if mode == self.MODE_FIRE:
+            self.game_mode = self.MODE_FIRE
+            self.max_duration = self.fire_max_duration
+        elif mode == self.MODE_WAVE:
+            self.game_mode = self.MODE_WAVE
+            self.max_duration = self.wave_max_duration
+        
+        if self.debug:
+            print(f"Game mode set to {mode}, duration: {self.max_duration}s")
         
     def register_state_callback(self, callback):
         """Register a callback for game state changes
@@ -225,13 +257,37 @@ class GameManager:
         if time_value < self.challenge_start_time:
             return self.baseline_value
         
-        # Calculate position along the ramp (0.0 to 1.0)
-        challenge_duration = self.max_duration - self.challenge_start_time
-        position = min(1.0, (time_value - self.challenge_start_time) / challenge_duration)
+        if self.game_mode == self.MODE_FIRE:
+            # Fire game - single ramp up
+            challenge_duration = self.fire_max_duration - self.challenge_start_time
+            position = min(1.0, (time_value - self.challenge_start_time) / challenge_duration)
+            
+            # Calculate target value using linear interpolation (ramp up)
+            target = self.baseline_value + (position * self.ramp_delta)
+            return target
+            
+        elif self.game_mode == self.MODE_WAVE:
+            # Wave game - ramp up, then ramp down
+            if time_value < self.wave_transition_time:
+                # First phase - ramp up (10s to 40s)
+                phase_duration = self.wave_transition_time - self.challenge_start_time
+                position = min(1.0, (time_value - self.challenge_start_time) / phase_duration)
+                
+                # Calculate target value using linear interpolation (ramp up)
+                target = self.baseline_value + (position * self.ramp_delta)
+                return target
+            else:
+                # Second phase - ramp down (40s to 70s)
+                phase_duration = self.wave_max_duration - self.wave_transition_time
+                position = min(1.0, (time_value - self.wave_transition_time) / phase_duration)
+                
+                # Start from the peak and ramp down
+                peak_value = self.baseline_value + self.ramp_delta
+                target = peak_value - (position * self.ramp_delta)
+                return target
         
-        # Calculate target value using linear interpolation
-        target = self.baseline_value + (position * self.ramp_delta)
-        return target
+        # Default fallback
+        return self.baseline_value
     
     def get_game_state(self):
         """Get the current game state as a dictionary
@@ -239,7 +295,7 @@ class GameManager:
         Returns:
             dict: Current game state information
         """
-        return {
+        state_info = {
             'state': self.state,
             'time': self.current_time,
             'baseline': self.baseline_value,
@@ -250,8 +306,21 @@ class GameManager:
             'time_below_target': self.time_below_target,
             'max_consecutive_target': self.max_consecutive_target,
             'challenge_start_time': self.challenge_start_time,
-            'max_duration': self.max_duration
+            'max_duration': self.max_duration,
+            'game_mode': self.game_mode
         }
+        
+        # Add wave-specific information if in wave mode
+        if self.game_mode == self.MODE_WAVE:
+            state_info['wave_transition_time'] = self.wave_transition_time
+            
+            # Add phase info (whether we're in the up or down phase)
+            if self.current_time < self.wave_transition_time:
+                state_info['wave_phase'] = 'up'
+            else:
+                state_info['wave_phase'] = 'down'
+        
+        return state_info
     
     def get_final_results(self):
         """Get the final game results

@@ -31,31 +31,54 @@ class UIManager:
         self.game_manager = game_manager
         self.debug = debug
         
+        # Enable debug
+        self.debug = True
+        
         # Configure background color
         self.root.configure(bg='black')
         
         # Set up Monaco-like font
         self.setup_fonts()
         
-        # Create UI components
-        self.setup_ui()
+        # UI state
+        self.current_screen = 'intro'  # Start with intro screen
         
-        # Register callbacks
-        self.register_callbacks()
+        # Create the frames for different screens
+        self.intro_frame = tk.Frame(self.root, bg='black')
+        self.game_frame = tk.Frame(self.root, bg='black')
         
-        # Initialize plot with empty data
-        if hasattr(self, 'line'):
-            self.line.set_data([], [])
-            self.canvas.draw_idle()
+        # Initialize matplotlib elements
+        self.fig = None
+        self.ax = None
+        self.canvas = None
+        self.line = None
         
         # Visualization elements
         self.baseline_line = None
         self.ramp_line = None
         self.ramp_fill = None
+        self.wave_fill = None  # New blue fill for wave down phase
+        
+        # Setup intro screen first
+        self.setup_intro_ui()
+        
+        # Then setup game UI
+        self.setup_game_ui()
+        
+        # Show intro screen initially
+        self.show_intro_screen()
+        
+        # Register callbacks
+        self.register_callbacks()
         
         # Start the UI update loop
         self.update_interval = 100  # 100ms = 10 updates per second
-        self.schedule_update()
+        # Only schedule updates when in game mode
+        if self.current_screen == 'game':
+            self.schedule_update()
+            
+        if self.debug:
+            print("UI Manager initialized successfully")
     
     def setup_fonts(self):
         """Set up fonts for the application"""
@@ -78,10 +101,58 @@ class UIManager:
         self.font_bold = tkfont.Font(family=base_font, size=9, weight="bold")
         self.font_title = tkfont.Font(family=base_font, size=10, weight="bold")
     
-    def setup_ui(self):
-        """Set up UI components"""
+    def setup_intro_ui(self):
+        """Set up the intro screen with game selection buttons"""
+        # Title label
+        title_label = tk.Label(
+            self.intro_frame,
+            text="Biofeedback Game",
+            fg="white",
+            bg="black",
+            font=self.font_title
+        )
+        title_label.pack(pady=50)
+        
+        # Button style
+        button_style = {
+            'bg': 'white',
+            'fg': 'black',
+            'activebackground': '#EEEEEE',
+            'activeforeground': 'black',
+            'font': self.font_normal,
+            'relief': tk.FLAT,
+            'borderwidth': 1,
+            'padx': 20,
+            'pady': 10,
+            'width': 15
+        }
+        
+        # Buttons frame
+        buttons_frame = tk.Frame(self.intro_frame, bg='black')
+        buttons_frame.pack(pady=20)
+        
+        # Fire game button
+        self.fire_button = tk.Button(
+            buttons_frame,
+            text="Fire",
+            command=lambda: self.start_game_mode('fire'),
+            **button_style
+        )
+        self.fire_button.pack(side=tk.LEFT, padx=20)
+        
+        # Wave game button
+        self.wave_button = tk.Button(
+            buttons_frame,
+            text="Wave",
+            command=lambda: self.start_game_mode('wave'),
+            **button_style
+        )
+        self.wave_button.pack(side=tk.LEFT, padx=20)
+    
+    def setup_game_ui(self):
+        """Set up the game screen with plot and controls"""
         # Main frame for the plot
-        self.plot_frame = tk.Frame(self.root, bg='black')
+        self.plot_frame = tk.Frame(self.game_frame, bg='black')
         self.plot_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
         # Create matplotlib figure with black background (larger size for bigger window)
@@ -132,7 +203,7 @@ class UIManager:
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
         
         # Bottom control frame with black background
-        self.control_frame = tk.Frame(self.root, bg='black')
+        self.control_frame = tk.Frame(self.game_frame, bg='black')
         self.control_frame.pack(fill=tk.X, padx=10, pady=10)
         
         # Button style
@@ -148,7 +219,7 @@ class UIManager:
             'pady': 5
         }
         
-        # Single multi-function button (Start/Stop/Clear)
+        # Action button (Start/Stop/Clear)
         self.action_button = tk.Button(
             self.control_frame, 
             text="Start",
@@ -156,6 +227,125 @@ class UIManager:
             **button_style
         )
         self.action_button.pack(side=tk.LEFT, padx=5)
+        
+        # Quit button to return to menu
+        self.quit_button = tk.Button(
+            self.control_frame,
+            text="Quit",
+            command=self.show_intro_screen,
+            **button_style
+        )
+        self.quit_button.pack(side=tk.RIGHT, padx=5)
+    
+    def show_intro_screen(self):
+        """Show the intro/selection screen, hide the game screen"""
+        # Stop any ongoing game
+        if self.arduino_manager.running:
+            self.arduino_manager.stop_reading()
+        
+        # Reset game state
+        self.game_manager.reset_game()
+        
+        # Hide game frame, show intro frame
+        self.game_frame.pack_forget()
+        self.intro_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Update current screen
+        self.current_screen = 'intro'
+        
+        # Cancel any scheduled updates
+        if hasattr(self, '_update_id'):
+            self.root.after_cancel(self._update_id)
+    
+    def start_game_mode(self, mode):
+        """Start a specific game mode (fire or wave)
+        
+        Args:
+            mode (str): Game mode to start
+        """
+        # Set the game mode
+        if mode == 'fire':
+            self.game_manager.set_game_mode(self.game_manager.MODE_FIRE)
+        else:
+            self.game_manager.set_game_mode(self.game_manager.MODE_WAVE)
+        
+        # Debug print
+        if self.debug:
+            print(f"Starting game mode: {mode}, duration: {self.game_manager.max_duration}s")
+            
+        try:
+            # Clear the plot completely
+            self.ax.clear()
+            
+            # Reset the plot style
+            self.ax.set_facecolor('black')
+            self.ax.tick_params(colors='white', which='both')
+            
+            # Hide all spines (borders) except the bottom one
+            for position in ['top', 'right', 'left']:
+                self.ax.spines[position].set_visible(False)
+            
+            # Keep only bottom spine (x-axis) and make it white
+            self.ax.spines['bottom'].set_color('white')
+            
+            # Only show x-axis label, no title, no y-axis label
+            self.ax.set_xlabel('seconds', color='white', fontsize=9)
+            self.ax.set_ylabel('')
+            self.ax.set_title('')
+            
+            # Hide y-axis completely
+            self.ax.yaxis.set_visible(False)
+            
+            # Only show x-axis grid lines
+            self.ax.grid(True, axis='x', color='white', alpha=0.3, linestyle='-', linewidth=0.5)
+            
+            # Create vertical line at 10s
+            self.ax.axvline(x=10, color='gray', linestyle='-', linewidth=0.5)
+            
+            # For Wave mode, add a second vertical line at 40s
+            if mode == 'wave':
+                self.ax.axvline(x=40, color='gray', linestyle='-', linewidth=0.5)
+            
+            # Set x ticks and labels to reflect the appropriate duration
+            max_duration = self.game_manager.max_duration
+            self.ax.set_xlim(0, max_duration)
+            self.ax.set_xticks(range(0, int(max_duration) + 1, 10))
+            
+            for label in self.ax.get_xticklabels():
+                label.set_color('white')
+                label.set_fontsize(8)
+            
+            # PPG signal line (white)
+            self.line, = self.ax.plot([], [], color='white', linewidth=1.5)
+            
+            # Set y-axis limits
+            self.ax.set_ylim(0, 1023)  # Arduino analog range (0-1023)
+            
+            # Reset visualization elements
+            self.baseline_line = None
+            self.ramp_line = None
+            self.ramp_fill = None
+            self.wave_fill = None
+            
+            # Force draw the canvas
+            self.canvas.draw()
+            
+            # Hide intro frame, show game frame
+            self.intro_frame.pack_forget()
+            self.game_frame.pack(fill=tk.BOTH, expand=True)
+            
+            # Update current screen
+            self.current_screen = 'game'
+            
+            # Reset action button
+            self.action_button.config(text="Start")
+            
+            # Start the UI update loop
+            self.schedule_update()
+            
+        except Exception as e:
+            # Print any errors that occur during setup
+            print(f"Error setting up game mode: {e}")
     
     def register_callbacks(self):
         """Register callbacks for Arduino and game events"""
@@ -305,23 +495,62 @@ class UIManager:
         challenge_start = self.game_manager.challenge_start_time
         max_duration = self.game_manager.max_duration
         ramp_delta = self.game_manager.ramp_delta
+        game_mode = data.get('game_mode')
         
-        # Calculate ramp end value (we'll need this even though we don't show the line)
+        # Calculate ramp end value
         ramp_end_value = baseline + ramp_delta
         
-        # Create or update the red fill under the ramp - the only visualization element
-        vertices = [
-            (challenge_start, self.ax.get_ylim()[0]),  # Bottom left
-            (challenge_start, baseline),               # Top left
-            (max_duration, ramp_end_value),            # Top right
-            (max_duration, self.ax.get_ylim()[0])      # Bottom right
-        ]
-        
-        if self.ramp_fill is None:
-            self.ramp_fill = self.ax.add_patch(Polygon(vertices, closed=True, facecolor='red', alpha=0.3))
-        else:
-            self.ramp_fill.set_xy(vertices)
+        if game_mode == self.game_manager.MODE_FIRE:
+            # Fire mode - simple red fill from 10s to 40s
+            vertices = [
+                (challenge_start, self.ax.get_ylim()[0]),  # Bottom left
+                (challenge_start, baseline),               # Top left
+                (max_duration, ramp_end_value),            # Top right
+                (max_duration, self.ax.get_ylim()[0])      # Bottom right
+            ]
             
+            if self.ramp_fill is None:
+                self.ramp_fill = self.ax.add_patch(Polygon(vertices, closed=True, facecolor='red', alpha=0.3))
+            else:
+                self.ramp_fill.set_xy(vertices)
+                
+            # Make sure wave fill is not visible
+            if self.wave_fill is not None:
+                self.wave_fill.set_visible(False)
+                
+        elif game_mode == self.game_manager.MODE_WAVE:
+            # Wave mode - red fill from 10s to 40s, then blue fill from 40s to 70s
+            wave_transition = self.game_manager.wave_transition_time
+            
+            # Red fill for first phase (breathe up)
+            red_vertices = [
+                (challenge_start, self.ax.get_ylim()[0]),  # Bottom left
+                (challenge_start, baseline),               # Top left
+                (wave_transition, ramp_end_value),         # Top right
+                (wave_transition, self.ax.get_ylim()[0])   # Bottom right
+            ]
+            
+            if self.ramp_fill is None:
+                self.ramp_fill = self.ax.add_patch(Polygon(red_vertices, closed=True, facecolor='red', alpha=0.3))
+            else:
+                self.ramp_fill.set_xy(red_vertices)
+                self.ramp_fill.set_visible(True)
+            
+            # Blue fill for second phase (breathe down)
+            # Create vertices for the TOP half (since we're showing where NOT to be)
+            blue_vertices = [
+                (wave_transition, ramp_end_value),         # Bottom left
+                (wave_transition, self.ax.get_ylim()[1]),  # Top left
+                (max_duration, baseline),                  # Bottom right
+                (max_duration, self.ax.get_ylim()[1])      # Top right
+            ]
+            
+            if self.wave_fill is None:
+                self.wave_fill = self.ax.add_patch(Polygon(blue_vertices, closed=True, facecolor='blue', alpha=0.3))
+            else:
+                self.wave_fill.set_xy(blue_vertices)
+                self.wave_fill.set_visible(True)
+        
         # We no longer create baseline_line or ramp_line
         self.baseline_line = None
         self.ramp_line = None
@@ -359,6 +588,10 @@ class UIManager:
         # Add vertical line at 10s (calibration end)
         self.ax.axvline(x=10, color='gray', linestyle='-', linewidth=0.5)
         
+        # For Wave mode, add a second vertical line at 40s
+        if self.game_manager.game_mode == self.game_manager.MODE_WAVE:
+            self.ax.axvline(x=40, color='gray', linestyle='-', linewidth=0.5)
+        
         # White tick labels for x-axis only
         for label in self.ax.get_xticklabels():
             label.set_color('white')
@@ -371,6 +604,7 @@ class UIManager:
         self.baseline_line = None
         self.ramp_line = None
         self.ramp_fill = None
+        self.wave_fill = None
         
         # Reset axis limits to default
         self.ax.set_xlim(0, self.game_manager.max_duration)
@@ -381,55 +615,60 @@ class UIManager:
     
     def update_plot(self):
         """Update the plot with latest data"""
-        # Only update if we have a connection and are in an active game state
-        if not self.arduino_manager.connected:
+        # Only update if we're in game mode and have a connection
+        if self.current_screen != 'game' or not self.arduino_manager.connected:
             # Schedule next update and return
             self.schedule_update()
             return
             
-        # Get all data (don't limit by time_range to ensure we keep all points)
-        timestamps, values = self.arduino_manager.get_recent_data()
-        
-        if timestamps and values:
-            # Update the signal line
-            self.line.set_data(timestamps, values)
+        try:
+            # Get all data (don't limit by time_range to ensure we keep all points)
+            timestamps, values = self.arduino_manager.get_recent_data()
             
-            # Adjust x-axis to show full game duration or all data points
-            if timestamps:
-                # Ensure the x-axis shows all data
-                min_time = min(timestamps)
-                max_time = max(timestamps)
+            if timestamps and values and hasattr(self, 'line') and self.line is not None:
+                # Update the signal line
+                self.line.set_data(timestamps, values)
                 
-                # Add small margin
-                margin = (max_time - min_time) * 0.05 if max_time > min_time else 1.0
-                
-                # Ensure x-axis is at least game.max_duration wide
-                if max_time - min_time < self.game_manager.max_duration:
-                    max_time = min_time + self.game_manager.max_duration
-                
-                self.ax.set_xlim(min_time - margin, max_time + margin)
-            
-            # Auto-adjust y-axis if we have real data
-            if len(values) > 1:
-                min_val = max(0, min(values) - 50)
-                max_val = min(1023, max(values) + 50)
-                
-                # If we have a baseline, make sure it's visible
-                game_data = self.game_manager.get_game_state()
-                baseline = game_data.get('baseline')
-                
-                if baseline is not None:
-                    ramp_delta = self.game_manager.ramp_delta
-                    max_val = max(max_val, baseline + ramp_delta + 20)
+                # Adjust x-axis to show full game duration or all data points
+                if timestamps:
+                    # Ensure the x-axis shows all data
+                    min_time = min(timestamps)
+                    max_time = max(timestamps)
                     
-                self.ax.set_ylim(min_val, max_val)
+                    # Add small margin
+                    margin = (max_time - min_time) * 0.05 if max_time > min_time else 1.0
+                    
+                    # Ensure x-axis is at least game.max_duration wide
+                    if max_time - min_time < self.game_manager.max_duration:
+                        max_time = min_time + self.game_manager.max_duration
+                    
+                    # Set x-axis limits
+                    self.ax.set_xlim(min_time - margin, max_time + margin)
                 
-                # Update fill if y-axis changed and ramp_fill exists
-                if self.ramp_fill is not None:
-                    self.update_visualization(game_data)
-            
-            # Redraw the canvas
-            self.canvas.draw_idle()
+                # Auto-adjust y-axis if we have real data
+                if len(values) > 1:
+                    min_val = max(0, min(values) - 50)
+                    max_val = min(1023, max(values) + 50)
+                    
+                    # If we have a baseline, make sure it's visible
+                    game_data = self.game_manager.get_game_state()
+                    baseline = game_data.get('baseline')
+                    
+                    if baseline is not None:
+                        ramp_delta = self.game_manager.ramp_delta
+                        max_val = max(max_val, baseline + ramp_delta + 20)
+                        
+                    self.ax.set_ylim(min_val, max_val)
+                    
+                    # Update visualization based on game mode
+                    if self.game_manager.state != self.game_manager.STATE_IDLE:
+                        self.update_visualization(game_data)
+                
+                # Redraw the canvas
+                self.canvas.draw_idle()
+        except Exception as e:
+            if self.debug:
+                print(f"Error updating plot: {e}")
         
         # Schedule next update
         self.schedule_update()
