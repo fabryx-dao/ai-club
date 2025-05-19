@@ -236,6 +236,16 @@ class UIManager:
             **button_style
         )
         self.quit_button.pack(side=tk.RIGHT, padx=5)
+        
+        # Add pass/fail indicator (initially hidden)
+        self.pass_fail_label = tk.Label(
+            self.control_frame,
+            text="",
+            fg="black",
+            bg="black",
+            font=("Arial", 24, "bold")  # Larger font for visibility
+        )
+        self.pass_fail_label.pack(side=tk.RIGHT, padx=15)
     
     def show_intro_screen(self):
         """Show the intro/selection screen, hide the game screen"""
@@ -474,6 +484,10 @@ class UIManager:
             # Leave connection intact but stop reading data when game is complete
             if self.arduino_manager.running:
                 self.arduino_manager.stop_reading()
+                
+            # Make one final update to the pass/fail indicator to freeze it at the final state
+            # The indicator will stay as-is until the user clears the game
+            self.update_pass_fail_indicator(data)
     
     def handle_action_button(self):
         """Multi-function button handler (Start/Stop/Clear)"""
@@ -529,6 +543,10 @@ class UIManager:
             # Force a redraw with empty data
             self.line.set_data([], [])
             self.canvas.draw()  # Use draw() instead of draw_idle() for immediate effect
+            
+            # Reset the pass/fail indicator
+            if hasattr(self, 'pass_fail_label'):
+                self.pass_fail_label.config(text="", fg="black")
             
             # Change button back to start
             self.action_button.config(text="Start")
@@ -669,8 +687,13 @@ class UIManager:
         self.ax.set_xlim(0, self.game_manager.max_duration)
         self.ax.set_ylim(0, 1023)  # Arduino analog range (0-1023)
         
+        # Any pass/fail feedback is automatically cleared when we call ax.clear()
+        
         # Force redraw immediately
         self.canvas.draw()
+        
+        if self.debug:
+            print("Visualization cleared")
     
     def update_plot(self):
         """Update the plot with latest data"""
@@ -722,6 +745,12 @@ class UIManager:
                     # Update visualization based on game mode
                     if self.game_manager.state != self.game_manager.STATE_IDLE:
                         self.update_visualization(game_data)
+                        
+                        # Only update pass/fail indicator if we're in the challenge state
+                        # and calibration is complete (so we have a baseline to compare against)
+                        if self.game_manager.state == self.game_manager.STATE_CHALLENGE:
+                            # Update the pass/fail indicator in real-time
+                            self.update_pass_fail_indicator(game_data)
                 
                 # Redraw the canvas
                 self.canvas.draw_idle()
@@ -731,6 +760,63 @@ class UIManager:
         
         # Schedule next update
         self.schedule_update()
+    
+    def update_pass_fail_indicator(self, data):
+        """Update the pass/fail indicator in the footer
+        
+        Args:
+            data (dict): Game state data with current values
+        """
+        try:
+            # Get the necessary data for evaluation
+            current_value = data.get('current_value')
+            target = data.get('target')
+            game_mode = data.get('game_mode')
+            
+            # Skip if we don't have enough data
+            if current_value is None or target is None or game_mode is None:
+                return
+            
+            # Determine if the user is currently passing or failing
+            passed = False
+            
+            # IMPORTANT: The pass/fail test needs to match the visual representation
+            # In Fire mode: red area is below the target line, so pass if above target
+            # In Wave mode: blue area is above the target line, so pass if below target
+            
+            if game_mode == self.game_manager.MODE_FIRE:
+                # Fire mode: pass if signal is ABOVE target (not in red area)
+                passed = current_value >= target
+            else:
+                # Wave mode: pass if signal is BELOW target (not in blue area)
+                passed = current_value <= target
+            
+            # Set the symbol and color based on pass/fail
+            symbol = "✓" if passed else "✗"
+            color = "#00FF00" if passed else "#FF0000"  # Bright green or red
+            
+            # Update or create the indicator label
+            if hasattr(self, 'pass_fail_label') and self.pass_fail_label:
+                self.pass_fail_label.config(text=symbol, fg=color)
+            else:
+                # Create the label if it doesn't exist
+                self.pass_fail_label = tk.Label(
+                    self.control_frame,
+                    text=symbol,
+                    fg=color,
+                    bg="black",
+                    font=("Arial", 24, "bold")  # Larger font for visibility
+                )
+                self.pass_fail_label.pack(side=tk.RIGHT, padx=15)
+            
+        except Exception as e:
+            print(f"Error updating pass/fail indicator: {e}")
+    
+    # This method is no longer used but kept for reference
+    def show_pass_fail_feedback(self, data):
+        """Display pass/fail feedback at the end of the game (no longer used)"""
+        # This method is replaced by update_pass_fail_indicator
+        pass
     
     def handle_quit_button(self):
         """Handle quit button press, properly cleaning up based on current state"""
@@ -757,6 +843,10 @@ class UIManager:
         # Update UI state for next game
         if hasattr(self, 'action_button'):
             self.action_button.config(text="Start")
+        
+        # Reset pass/fail indicator
+        if hasattr(self, 'pass_fail_label'):
+            self.pass_fail_label.config(text="", fg="black")
             
         # Reset visualization elements
         self.baseline_line = None

@@ -56,6 +56,10 @@ class GameManager:
         self.calibration_values = []
         self.current_value = None
         
+        # Store final values for pass/fail determination
+        self.final_signal_value = None
+        self.final_target_value = None
+        
         # Performance metrics
         self.score = 0
         self.time_in_target = 0.0
@@ -218,15 +222,26 @@ class GameManager:
                 if self.current_consecutive_target > self.max_consecutive_target:
                     self.max_consecutive_target = self.current_consecutive_target
                 
-                if self.debug:
-                    print("Challenge complete!")
-                    print(f"Final score: {self.score}")
-                    print(f"Time in target: {self.time_in_target:.1f} seconds")
-                    print(f"Max consecutive: {self.max_consecutive_target:.1f} seconds")
+                # Print information to console for debugging
+                print("=== GAME COMPLETE ===")
+                print(f"Game mode: {self.game_mode}")
+                print(f"Final score: {self.score}")
+                print(f"Time in target: {self.time_in_target:.1f} seconds")
+                print(f"Max consecutive: {self.max_consecutive_target:.1f} seconds")
+                print(f"Final signal value: {signal_value}")
+                print(f"Final target value: {target_value}")
                 
-                # Notify state change
+                # Store final values for pass/fail determination
+                self.final_signal_value = signal_value
+                self.final_target_value = target_value
+                
+                # Notify state change with complete game state
                 if self.state_callback:
-                    self.state_callback(self.state, self.get_game_state())
+                    complete_state = self.get_game_state()
+                    # Add final values explicitly to ensure they're available
+                    complete_state['final_signal'] = signal_value
+                    complete_state['final_target'] = target_value
+                    self.state_callback(self.state, complete_state)
             
             return self.get_game_state()
             
@@ -295,12 +310,15 @@ class GameManager:
         Returns:
             dict: Current game state information
         """
+        # Calculate current target
+        current_target = self._calculate_target(self.current_time) if self.baseline_value is not None else None
+        
         state_info = {
             'state': self.state,
             'time': self.current_time,
             'baseline': self.baseline_value,
             'current_value': self.current_value,
-            'target': self._calculate_target(self.current_time) if self.baseline_value is not None else None,
+            'target': current_target,
             'score': self.score,
             'time_in_target': self.time_in_target,
             'time_below_target': self.time_below_target,
@@ -319,6 +337,11 @@ class GameManager:
                 state_info['wave_phase'] = 'up'
             else:
                 state_info['wave_phase'] = 'down'
+        
+        # Add final values if we're in COMPLETE state
+        if self.state == self.STATE_COMPLETE:
+            state_info['final_signal'] = self.final_signal_value
+            state_info['final_target'] = self.final_target_value
         
         return state_info
     
