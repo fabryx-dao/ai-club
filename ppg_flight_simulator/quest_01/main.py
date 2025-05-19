@@ -29,6 +29,8 @@ def parse_arguments():
                         help=f'Serial baud rate (default: {DEFAULT_BAUD_RATE})')
     parser.add_argument('--debug', action='store_true',
                         help='Enable debug mode (more verbose output)')
+    parser.add_argument('--fake', action='store_true',
+                        help='Use fake PPG data instead of Arduino data')
     return parser.parse_args()
 
 def main():
@@ -40,6 +42,8 @@ def main():
     debug_mode = args.debug
     if debug_mode:
         print("Debug mode enabled")
+        if args.fake:
+            print("Using fake data mode (internal only - not visible to user)")
         print(f"Using port: {args.port}")
         print(f"Using baud rate: {args.baud}")
     
@@ -54,7 +58,8 @@ def main():
     arduino_manager = ArduinoManager(
         port=args.port,
         baud_rate=args.baud,
-        debug=debug_mode
+        debug=debug_mode,
+        use_fake_data=args.fake
     )
     
     # Try to connect immediately, but don't start reading data yet

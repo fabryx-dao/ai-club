@@ -9,22 +9,25 @@ including serial connection, data reading, and signal processing.
 import serial
 import time
 import threading
+import random
 from collections import deque
 
 class ArduinoManager:
     """Handles communication with Arduino and signal processing"""
     
-    def __init__(self, port, baud_rate=9600, debug=False):
+    def __init__(self, port, baud_rate=9600, debug=False, use_fake_data=False):
         """Initialize the Arduino manager
         
         Args:
             port (str): Serial port for the Arduino
             baud_rate (int): Baud rate for serial communication
             debug (bool): Enable debug output
+            use_fake_data (bool): Use fake PPG data instead of real Arduino data
         """
         self.port = port
         self.baud_rate = baud_rate
         self.debug = debug
+        self.use_fake_data = use_fake_data
         
         self.ser = None
         self.connected = False
@@ -41,10 +44,18 @@ class ArduinoManager:
         # Connection status callback
         self.connection_callback = None
         
+        # Fake data generation parameters
+        self.fake_data_base = 575  # Base value for fake data
+        self.fake_data_game_mode = None  # Will store the game mode for fake data generation
+        self.fake_data_calibration_end = 10.0  # Time at which calibration ends
+        self.fake_data_game_end = 40.0  # Time at which the fire game ends
+        self.fake_data_wave_transition = 40.0  # Time at which wave game transitions
+        self.fake_data_wave_end = 70.0  # Time at which the wave game ends
+        
         # No automatic connection at init - will be called from main
     
     def connect(self, start_reading=False):
-        """Attempt to connect to the Arduino
+        """Attempt to connect to the Arduino or set up fake data
         
         Args:
             start_reading (bool): Whether to start reading data after connecting
@@ -52,6 +63,27 @@ class ArduinoManager:
         Returns:
             bool: Whether connection was successful
         """
+        # If using fake data, no need for actual connection
+        if self.use_fake_data:
+            self.connected = True
+            
+            if self.debug:
+                print("Fake data mode active - no Arduino connection needed")
+            
+            # Notify via callback if provided, but make it look like normal connection
+            if self.connection_callback:
+                status_msg = "Connected"
+                if start_reading:
+                    status_msg += " & Reading"
+                self.connection_callback(True, status_msg, self.running)
+            
+            # Only start reading if explicitly requested
+            if start_reading and not self.running:
+                self.start_reading()
+            
+            return True
+            
+        # Use actual Arduino connection
         try:
             # Close existing connection if any
             if self.ser and self.ser.is_open:
@@ -118,6 +150,31 @@ class ArduinoManager:
     
     def start_reading(self):
         """Start the data reading thread"""
+        # Special handling for fake data mode
+        if self.use_fake_data:
+            if not self.connected:
+                # Ensure connected state is set for fake data mode
+                self.connected = True
+                
+            # Only clear data if we're restarting reading after a stop
+            if not self.running:
+                self.clear_data()
+            
+            self.running = True
+            self.read_thread = threading.Thread(target=self._read_loop)
+            self.read_thread.daemon = True  # Thread will exit when main program exits
+            self.read_thread.start()
+            
+            if self.debug:
+                print("Started fake data generation thread")
+            
+            # Notify about reading status change (hide the fact it's fake data)
+            if self.connection_callback:
+                self.connection_callback(True, "Connected & Reading", True)
+            
+            return True
+        
+        # Original behavior for real Arduino connection
         if not self.connected or self.ser is None or not self.ser.is_open:
             if self.debug:
                 print("Cannot start reading - not connected")
@@ -164,10 +221,117 @@ class ArduinoManager:
         if self.connection_callback and self.connected:
             self.connection_callback(True, "Connected", False)
     
+    def _generate_fake_data(self, current_time):
+        """Generate fake PPG data that's guaranteed to succeed in the game
+        
+        Args:
+            current_time (float): Current time in seconds
+            
+        Returns:
+            int: Fake PPG value that will lead to game success
+        """
+        # Base value with random oscillation
+        value = self.fake_data_base + random.randint(-10, 10)
+        
+        # During calibration phase (0-10s), just return oscillating values
+        if current_time <= self.fake_data_calibration_end:
+            return value
+            
+        # Determine game mode from elapsed time if not already known
+        if self.fake_data_game_mode is None:
+            # If time goes beyond 40s, we must be in wave mode
+            if current_time > self.fake_data_game_end:
+                self.fake_data_game_mode = 'wave'
+            # We'll assume fire mode until we see evidence of wave mode
+            else:
+                self.fake_data_game_mode = 'fire'
+        
+        # For fire game (10-40s), gradually increase signal to end above target
+        if self.fake_data_game_mode == 'fire':
+            # Calculate how far we are in the game (0.0 to 1.0)
+            game_progress = (current_time - self.fake_data_calibration_end) / (self.fake_data_game_end - self.fake_data_calibration_end)
+            game_progress = max(0.0, min(1.0, game_progress))  # Clamp to 0-1 range
+            
+            # Add gradually increasing trend (ensure we end up comfortably above target)
+            trend_value = 60 * game_progress  # Will add up to +60 at the end
+            return int(value + trend_value)
+            
+        # For wave game (10-70s)
+        elif self.fake_data_game_mode == 'wave':
+            # First phase (10-40s) - go up
+            if current_time <= self.fake_data_wave_transition:
+                # Calculate progress in first phase (0.0 to 1.0)
+                phase_progress = (current_time - self.fake_data_calibration_end) / (self.fake_data_wave_transition - self.fake_data_calibration_end)
+                phase_progress = max(0.0, min(1.0, phase_progress))  # Clamp to 0-1 range
+                
+                # Add gradually increasing trend
+                trend_value = 60 * phase_progress  # Will add up to +60 at transition
+                return int(value + trend_value)
+                
+            # Second phase (40-70s) - go down
+            else:
+                # Calculate progress in second phase (0.0 to 1.0)
+                phase_progress = (current_time - self.fake_data_wave_transition) / (self.fake_data_wave_end - self.fake_data_wave_transition)
+                phase_progress = max(0.0, min(1.0, phase_progress))  # Clamp to 0-1 range
+                
+                # Start from peak and gradually decrease to below baseline
+                peak_value = 60  # Peak value added at the transition point
+                trend_value = peak_value - (peak_value + 20) * phase_progress  # Will go from +60 to -20
+                return int(value + trend_value)
+        
+        # Fallback - just return the oscillating base value
+        return value
+
     def _read_loop(self):
-        """Main loop for reading data from Arduino (runs in separate thread)"""
+        """Main loop for reading data from Arduino or generating fake data (runs in separate thread)"""
         start_time = time.time()  # Reference time for timestamps
         
+        # If using fake data, run a separate loop that generates data
+        if self.use_fake_data:
+            # Reset game mode detection on each new data stream
+            self.fake_data_game_mode = None
+            
+            # Loop for generating fake data at regular intervals
+            while self.running and self.connected:
+                try:
+                    current_time = time.time() - start_time  # Time since start
+                    
+                    # Generate fake data
+                    value = self._generate_fake_data(current_time)
+                    
+                    # Store the value
+                    self.data_buffer.append(value)
+                    self.timestamps.append(current_time)
+                    
+                    # Debug output (don't expose that it's fake data unless debug is on)
+                    if self.debug:
+                        timestamp = time.strftime("%H:%M:%S", time.localtime())
+                        print(f"{timestamp} - PPG value: {value} (fake)")
+                    
+                    # Notify via callback if provided
+                    if self.data_callback:
+                        self.data_callback(current_time, value)
+                    
+                    # Sleep to simulate 10Hz data rate (same as Arduino)
+                    time.sleep(0.1)
+                    
+                except Exception as e:
+                    # Handle errors
+                    if self.debug:
+                        print(f"Error generating fake data: {str(e)}")
+                    
+                    # Small sleep to avoid tight loop on error
+                    time.sleep(0.1)
+            
+            # When we exit the loop, make sure running is set to False
+            self.running = False
+            
+            if self.debug:
+                print("Exiting fake data generation loop")
+            
+            return
+        
+        # Original Arduino read loop
         while self.running and self.connected and self.ser and self.ser.is_open:
             try:
                 if self.ser.in_waiting > 0:
