@@ -522,7 +522,7 @@ class UIManager:
             # Wave mode - red fill from 10s to 40s, then blue fill from 40s to 70s
             wave_transition = self.game_manager.wave_transition_time
             
-            # Red fill for first phase (breathe up)
+            # Red fill for first phase (breathe up) - bottom half is colored
             red_vertices = [
                 (challenge_start, self.ax.get_ylim()[0]),  # Bottom left
                 (challenge_start, baseline),               # Top left
@@ -536,13 +536,19 @@ class UIManager:
                 self.ramp_fill.set_xy(red_vertices)
                 self.ramp_fill.set_visible(True)
             
-            # Blue fill for second phase (breathe down)
-            # Create vertices for the TOP half (since we're showing where NOT to be)
+            # Blue fill for second phase (breathe down) - top half is colored
+            # The ramp should be symmetrically reflected around the wave_transition point (40s)
+            # First phase goes from baseline to ramp_end_value over 30 seconds
+            # Second phase should go from ramp_end_value back to baseline over 30 seconds
+            
+            # Calculate upper bound for plot
+            upper_bound = self.ax.get_ylim()[1]
+            
             blue_vertices = [
                 (wave_transition, ramp_end_value),         # Bottom left
-                (wave_transition, self.ax.get_ylim()[1]),  # Top left
+                (wave_transition, upper_bound),            # Top left
+                (max_duration, upper_bound),               # Top right
                 (max_duration, baseline),                  # Bottom right
-                (max_duration, self.ax.get_ylim()[1])      # Top right
             ]
             
             if self.wave_fill is None:
