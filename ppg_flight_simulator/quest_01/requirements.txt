@@ -1,0 +1,13 @@
+# PPG Biofeedback Game - Requirements
+# Install with: pip install -r requirements.txt
+
+# Serial communication
+pyserial>=3.5
+
+# Data visualization and UI
+matplotlib>=3.7.0
+numpy>=1.24.0
+
+# For future extensions (optional)
+# pandas>=2.0.0  # For data analysis
+# scipy>=1.10.0  # For signal processing
